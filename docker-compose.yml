@@ -1,0 +1,42 @@
+name: dms
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: dms
+      POSTGRES_USER: dms
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dms}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dms -d dms"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/dms
+      SPRING_DATASOURCE_USERNAME: dms
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-dms}
+    volumes:
+      - documents:/var/lib/dms/documents
+    ports:
+      - "8081:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  db-data:
+  documents:

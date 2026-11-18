@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - run: ./mvnw -B verify
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  # Starts the full stack with Docker Compose and exercises it through the nginx proxy.
+  end-to-end:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker compose up --build --detach --wait
+      - name: Upload, search, download and delete a document
+        run: |
+          set -euo pipefail
+          echo "hello from CI" > smoke.txt
+          id=$(curl -fsS -F file=@smoke.txt -F title="Smoke test" http://localhost:8080/api/documents | jq -r .id)
+          curl -fsS "http://localhost:8080/api/documents?q=smoke" | jq -e 'length == 1'
+          test "$(curl -fsS http://localhost:8080/api/documents/$id/content)" = "hello from CI"
+          curl -fsS -X DELETE "http://localhost:8080/api/documents/$id"
+          curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down --volumes
