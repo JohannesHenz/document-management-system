@@ -20,6 +20,22 @@ jobs:
           cache: maven
       - run: ./mvnw -B verify
 
+  ocr-worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ocr-worker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      # So the tests against the real Tesseract binary run instead of being skipped.
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-deu
+      - run: ./mvnw -B verify
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -38,7 +54,7 @@ jobs:
 
   # Starts the full stack with Docker Compose and exercises it through the nginx proxy.
   end-to-end:
-    needs: [backend, frontend]
+    needs: [backend, ocr-worker, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -52,6 +68,20 @@ jobs:
           test "$(curl -fsS http://localhost:8080/api/documents/$id/content)" = "hello from CI"
           curl -fsS -X DELETE "http://localhost:8080/api/documents/$id"
           curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+      - name: Extract text from a scanned invoice and find it by its content
+        run: |
+          set -euo pipefail
+          api=http://localhost:8080/api/documents
+          id=$(curl -fsS -F file=@e2e/invoice-scan.png -F title="Scanned invoice" $api | jq -r .id)
+          for i in $(seq 1 60); do
+            status=$(curl -fsS $api/$id | jq -r .textStatus)
+            [ "$status" != PENDING ] && break
+            sleep 1
+          done
+          test "$status" = COMPLETED
+          curl -fsS $api/$id/text | grep -q 'Rechnung Nr. 4711'
+          # a typo still finds the document through Elasticsearch's fuzzy matching
+          curl -fsS "$api?q=Gesamtbetrg" | jq -e --arg id "$id" 'map(.id) == [$id]'
       - if: failure()
         run: docker compose logs
       - if: always()
