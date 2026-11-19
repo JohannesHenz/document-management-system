@@ -1,5 +1,9 @@
 package com.swen3.dms.document;
 
+import com.swen3.dms.document.DocumentEvents.DocumentChanged;
+import com.swen3.dms.document.DocumentEvents.DocumentDeleted;
+import com.swen3.dms.document.DocumentEvents.TextExtractionRequested;
+import com.swen3.dms.ocr.OcrProperties;
 import com.swen3.dms.search.DocumentSearch;
 import com.swen3.dms.search.SearchHit;
 import com.swen3.dms.storage.DocumentStorage;
@@ -17,7 +21,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -33,13 +39,17 @@ public class DocumentService {
     private final DocumentRepository repository;
     private final DocumentStorage storage;
     private final DocumentSearch search;
+    private final OcrProperties ocr;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
     public DocumentService(DocumentRepository repository, DocumentStorage storage, DocumentSearch search,
-                           Clock clock) {
+                           OcrProperties ocr, ApplicationEventPublisher events, Clock clock) {
         this.repository = repository;
         this.storage = storage;
         this.search = search;
+        this.ocr = ocr;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -61,13 +71,22 @@ public class DocumentService {
             throw new UncheckedIOException("Could not read the uploaded file.", e);
         }
 
+        Document document = new Document(effectiveTitle, filename, contentType, file.getSize(),
+                storageKey, Instant.now(clock).truncatedTo(ChronoUnit.MICROS)); // database precision
+        if (ocr.accepts(contentType)) {
+            document.markTextPending();
+        }
         try {
-            return repository.saveAndFlush(new Document(effectiveTitle, filename, contentType, file.getSize(),
-                    storageKey, Instant.now(clock).truncatedTo(ChronoUnit.MICROS))); // database precision
+            document = repository.saveAndFlush(document);
         } catch (RuntimeException e) {
             storage.delete(storageKey); // do not leave an orphaned file behind
             throw e;
         }
+        if (document.getTextStatus() == TextStatus.PENDING) {
+            events.publishEvent(new TextExtractionRequested(document.getId(), storageKey, contentType));
+        }
+        events.publishEvent(new DocumentChanged(document.getId()));
+        return document;
     }
 
     /** Lists all documents newest first, or searches titles, file names and extracted text. */
@@ -109,20 +128,26 @@ public class DocumentService {
         requireValidText("Title", newTitle);
         Document document = get(id);
         document.rename(newTitle);
+        events.publishEvent(new DocumentChanged(id));
         return document;
     }
 
     /** Stores the text extracted by the OCR worker. Results for deleted documents are ignored. */
     @Transactional
     public void completeTextExtraction(UUID id, String text) {
-        repository.findById(id).ifPresentOrElse(
-                document -> document.completeText(text),
-                () -> log.info("Ignoring extracted text for deleted document {}", id));
+        repository.findById(id).ifPresentOrElse(document -> {
+            document.completeText(text);
+            events.publishEvent(new DocumentChanged(id));
+        }, () -> log.info("Ignoring extracted text for deleted document {}", id));
     }
 
-    @Transactional
+    /** Runs in its own transaction, as it is also called after the upload transaction has committed. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void failTextExtraction(UUID id) {
-        repository.findById(id).ifPresent(Document::failText);
+        repository.findById(id).ifPresent(document -> {
+            document.failText();
+            events.publishEvent(new DocumentChanged(id));
+        });
     }
 
     @Transactional
@@ -130,6 +155,7 @@ public class DocumentService {
         Document document = get(id);
         repository.delete(document);
         repository.flush();
+        events.publishEvent(new DocumentDeleted(id));
         try {
             storage.delete(document.getStorageKey());
         } catch (RuntimeException e) {
