@@ -1,5 +1,7 @@
 name: dms
 
+# Credentials default to development values; set them in a .env file for anything else.
+
 services:
   db:
     image: postgres:17-alpine
@@ -15,18 +17,93 @@ services:
       timeout: 3s
       retries: 20
 
+  # S3-compatible object storage for the uploaded files. MinIO no longer publishes community images;
+  # this is a community-maintained build of the same server.
+  minio:
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dms}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dms-secret}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9001:9001" # web console
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dms}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-dms}
+    ports:
+      - "15672:15672" # management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Security is disabled for local development only.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.18.8
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=2s'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   backend:
     build: ./backend
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/dms
       SPRING_DATASOURCE_USERNAME: dms
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-dms}
-    volumes:
-      - documents:/var/lib/dms/documents
+      DMS_STORAGE_TYPE: minio
+      DMS_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      DMS_STORAGE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dms}
+      DMS_STORAGE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dms-secret}
+      DMS_OCR_ENABLED: "true"
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-dms}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dms}
+      DMS_SEARCH_ELASTICSEARCH_ENABLED: "true"
+      SPRING_ELASTICSEARCH_URIS: http://elasticsearch:9200
     ports:
       - "8081:8081"
     depends_on:
       db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  ocr-worker:
+    build: ./ocr-worker
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-dms}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dms}
+      DMS_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      DMS_STORAGE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dms}
+      DMS_STORAGE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dms-secret}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      minio:
         condition: service_healthy
 
   frontend:
@@ -39,4 +116,5 @@ services:
 
 volumes:
   db-data:
-  documents:
+  minio-data:
+  es-data:
