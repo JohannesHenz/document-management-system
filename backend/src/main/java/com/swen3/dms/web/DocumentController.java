@@ -45,7 +45,7 @@ public class DocumentController {
         return ResponseEntity.created(location).body(DocumentResponse.from(document));
     }
 
-    /** Lists all documents, newest first, or only those whose title or file name contains {@code q}. */
+    /** Lists all documents, newest first, or those whose title, file name or extracted text matches {@code q}. */
     @GetMapping
     public List<DocumentResponse> list(@RequestParam(required = false) String q) {
         return documentService.list(q).stream().map(DocumentResponse::from).toList();
@@ -54,6 +54,12 @@ public class DocumentController {
     @GetMapping("/{id}")
     public DocumentResponse get(@PathVariable UUID id) {
         return DocumentResponse.from(documentService.get(id));
+    }
+
+    /** The text extracted by the OCR worker; 409 while it is not (yet) available. */
+    @GetMapping(value = "/{id}/text", produces = MediaType.TEXT_PLAIN_VALUE + ";charset=UTF-8")
+    public String text(@PathVariable UUID id) {
+        return documentService.getText(id);
     }
 
     @GetMapping("/{id}/content")

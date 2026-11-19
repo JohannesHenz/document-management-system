@@ -11,7 +11,7 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
     List<Document> findAllByOrderByUploadedAtDesc();
 
     /**
-     * Case-insensitive search in title and file name.
+     * Case-insensitive search in title, file name and extracted text.
      *
      * @param pattern a LIKE pattern, lower-cased, with {@code \} as the escape character
      */
@@ -19,6 +19,7 @@ public interface DocumentRepository extends JpaRepository<Document, UUID> {
             select d from Document d
             where lower(d.title) like :pattern escape '\\'
                or lower(d.originalFilename) like :pattern escape '\\'
+               or lower(d.extractedText) like :pattern escape '\\'
             order by d.uploadedAt desc
             """)
     List<Document> search(@Param("pattern") String pattern);

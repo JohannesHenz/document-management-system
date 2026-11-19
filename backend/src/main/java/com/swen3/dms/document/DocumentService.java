@@ -1,5 +1,7 @@
 package com.swen3.dms.document;
 
+import com.swen3.dms.search.DocumentSearch;
+import com.swen3.dms.search.SearchHit;
 import com.swen3.dms.storage.DocumentStorage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -8,8 +10,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -27,11 +32,14 @@ public class DocumentService {
 
     private final DocumentRepository repository;
     private final DocumentStorage storage;
+    private final DocumentSearch search;
     private final Clock clock;
 
-    public DocumentService(DocumentRepository repository, DocumentStorage storage, Clock clock) {
+    public DocumentService(DocumentRepository repository, DocumentStorage storage, DocumentSearch search,
+                           Clock clock) {
         this.repository = repository;
         this.storage = storage;
+        this.search = search;
         this.clock = clock;
     }
 
@@ -62,15 +70,32 @@ public class DocumentService {
         }
     }
 
-    public List<Document> list(String query) {
+    /** Lists all documents newest first, or searches titles, file names and extracted text. */
+    public List<DocumentMatch> list(String query) {
         if (!StringUtils.hasText(query)) {
-            return repository.findAllByOrderByUploadedAtDesc();
+            return repository.findAllByOrderByUploadedAtDesc().stream()
+                    .map(document -> new DocumentMatch(document, null))
+                    .toList();
         }
-        return repository.search("%" + escapeLike(query.strip().toLowerCase(Locale.ROOT)) + "%");
+        List<SearchHit> hits = search.search(query);
+        Map<UUID, Document> documents = repository.findAllById(hits.stream().map(SearchHit::documentId).toList())
+                .stream().collect(Collectors.toMap(Document::getId, Function.identity()));
+        return hits.stream()
+                .filter(hit -> documents.containsKey(hit.documentId())) // the index may briefly lag behind deletes
+                .map(hit -> new DocumentMatch(documents.get(hit.documentId()), hit.snippet()))
+                .toList();
     }
 
     public Document get(UUID id) {
         return repository.findById(id).orElseThrow(() -> new DocumentNotFoundException(id));
+    }
+
+    public String getText(UUID id) {
+        Document document = get(id);
+        if (document.getTextStatus() != TextStatus.COMPLETED) {
+            throw new TextNotAvailableException(id, document.getTextStatus());
+        }
+        return Objects.requireNonNullElse(document.getExtractedText(), "");
     }
 
     public DocumentContent getContent(UUID id) {
@@ -85,6 +110,19 @@ public class DocumentService {
         Document document = get(id);
         document.rename(newTitle);
         return document;
+    }
+
+    /** Stores the text extracted by the OCR worker. Results for deleted documents are ignored. */
+    @Transactional
+    public void completeTextExtraction(UUID id, String text) {
+        repository.findById(id).ifPresentOrElse(
+                document -> document.completeText(text),
+                () -> log.info("Ignoring extracted text for deleted document {}", id));
+    }
+
+    @Transactional
+    public void failTextExtraction(UUID id) {
+        repository.findById(id).ifPresent(Document::failText);
     }
 
     @Transactional
@@ -113,9 +151,5 @@ public class DocumentService {
         if (value.length() > MAX_TEXT_LENGTH) {
             throw new InvalidDocumentException(field + " must be at most " + MAX_TEXT_LENGTH + " characters.");
         }
-    }
-
-    private static String escapeLike(String value) {
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 }

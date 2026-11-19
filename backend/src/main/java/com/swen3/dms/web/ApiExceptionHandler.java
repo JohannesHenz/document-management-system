@@ -2,6 +2,7 @@ package com.swen3.dms.web;
 
 import com.swen3.dms.document.DocumentNotFoundException;
 import com.swen3.dms.document.InvalidDocumentException;
+import com.swen3.dms.document.TextNotAvailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -15,6 +16,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DocumentNotFoundException.class)
     ProblemDetail handleNotFound(DocumentNotFoundException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(TextNotAvailableException.class)
+    ProblemDetail handleTextNotAvailable(TextNotAvailableException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
     }
 
     @ExceptionHandler(InvalidDocumentException.class)

@@ -2,6 +2,8 @@ package com.swen3.dms.document;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -35,6 +37,13 @@ public class Document {
 
     @Column(name = "uploaded_at", nullable = false)
     private Instant uploadedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "text_status", nullable = false, length = 16)
+    private TextStatus textStatus = TextStatus.NOT_EXTRACTED;
+
+    @Column(name = "extracted_text", columnDefinition = "text")
+    private String extractedText;
 
     protected Document() {
         // for JPA
@@ -80,5 +89,28 @@ public class Document {
 
     public Instant getUploadedAt() {
         return uploadedAt;
+    }
+
+    public TextStatus getTextStatus() {
+        return textStatus;
+    }
+
+    public String getExtractedText() {
+        return extractedText;
+    }
+
+    void markTextPending() {
+        this.textStatus = TextStatus.PENDING;
+        this.extractedText = null;
+    }
+
+    void completeText(String text) {
+        this.textStatus = TextStatus.COMPLETED;
+        this.extractedText = text;
+    }
+
+    void failText() {
+        this.textStatus = TextStatus.FAILED;
+        this.extractedText = null;
     }
 }

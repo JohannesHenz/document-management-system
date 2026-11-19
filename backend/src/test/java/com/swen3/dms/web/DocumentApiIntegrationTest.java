@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.swen3.dms.document.DocumentRepository;
+import com.swen3.dms.document.DocumentService;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -52,6 +53,9 @@ class DocumentApiIntegrationTest {
 
     @Autowired
     DocumentRepository repository;
+
+    @Autowired
+    DocumentService documentService;
 
     @BeforeEach
     void cleanDatabase() {
@@ -137,6 +141,34 @@ class DocumentApiIntegrationTest {
 
         mvc.perform(get("/api/documents").param("q", ".pdf"))
                 .andExpect(jsonPath("$", hasSize(2)));
+    }
+
+    @Test
+    void searchFindsExtractedTextAndReturnsSnippet() throws Exception {
+        String id = upload("scan.pdf", "application/pdf", "1", "Scan");
+        upload("other.pdf", "application/pdf", "2", "Other");
+        documentService.completeTextExtraction(UUID.fromString(id), "Rechnung Nr. 4711\nBetrag: 120 EUR");
+
+        mvc.perform(get("/api/documents").param("q", "betrag"))
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id").value(id))
+                .andExpect(jsonPath("$[0].textStatus").value("COMPLETED"))
+                .andExpect(jsonPath("$[0].snippet").value("Rechnung Nr. 4711 Betrag: 120 EUR"));
+
+        mvc.perform(get("/api/documents/{id}/text", id))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Rechnung Nr. 4711\nBetrag: 120 EUR"));
+    }
+
+    @Test
+    void textIsUnavailableUntilExtracted() throws Exception {
+        String id = upload("a.txt", "text/plain", "x", "Title");
+
+        mvc.perform(get("/api/documents/{id}", id)).andExpect(jsonPath("$.textStatus").value("NOT_EXTRACTED"));
+        mvc.perform(get("/api/documents/{id}/text", id)).andExpect(status().isConflict());
+
+        documentService.failTextExtraction(UUID.fromString(id));
+        mvc.perform(get("/api/documents/{id}", id)).andExpect(jsonPath("$.textStatus").value("FAILED"));
     }
 
     @Test
