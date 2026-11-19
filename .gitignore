@@ -7,6 +7,9 @@
 backend/target/
 backend/data/
 
+# OCR worker
+ocr-worker/target/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/
