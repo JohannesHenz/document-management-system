@@ -3,7 +3,7 @@ export default function SearchBar({ value, onChange }) {
     <input
       className="search"
       type="search"
-      placeholder="Search by title or file name"
+      placeholder="Search titles, file names and text"
       aria-label="Search documents"
       value={value}
       onChange={(event) => onChange(event.target.value)}

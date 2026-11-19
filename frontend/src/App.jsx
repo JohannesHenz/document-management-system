@@ -5,6 +5,7 @@ import SearchBar from './components/SearchBar.jsx';
 import DocumentTable from './components/DocumentTable.jsx';
 
 const SEARCH_DEBOUNCE_MS = 250;
+const PENDING_POLL_MS = 2000;
 
 export default function App() {
   const [documents, setDocuments] = useState([]);
@@ -37,6 +38,14 @@ export default function App() {
       clearTimeout(timer);
     };
   }, [query, reloadToken]);
+
+  // Refresh while the OCR worker is still extracting text, so statuses update on their own.
+  const anyPending = documents.some((doc) => doc.textStatus === 'PENDING');
+  useEffect(() => {
+    if (!anyPending) return undefined;
+    const timer = setTimeout(() => setReloadToken((token) => token + 1), PENDING_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [anyPending, documents]);
 
   function changed(message) {
     setNotice(message);
@@ -76,6 +85,7 @@ export default function App() {
           ) : (
             <DocumentTable
               documents={documents}
+              query={query}
               emptyText={query ? `No documents match “${query}”.` : 'No documents yet. Upload one above.'}
               onRenamed={(doc) => changed(`Renamed to “${doc.title}”.`)}
               onDeleted={(doc) => changed(`Deleted “${doc.title}”.`)}

@@ -165,6 +165,70 @@ describe('App', () => {
     expect(screen.getByText('invoice.pdf')).toBeInTheDocument();
   });
 
+  it('shows the text extraction status of each document', async () => {
+    mockApi({
+      'GET /api/documents': () =>
+        json([
+          { ...invoice, id: 'a', title: 'Scan', textStatus: 'PENDING' },
+          { ...invoice, id: 'b', title: 'Photo', textStatus: 'FAILED' },
+          { ...invoice, id: 'c', title: 'Notes', textStatus: 'NOT_EXTRACTED' },
+        ]),
+    });
+
+    render(<App />);
+
+    expect(within((await screen.findByText('Scan')).closest('tr')).getByText('Extracting…')).toBeInTheDocument();
+    expect(within(screen.getByText('Photo').closest('tr')).getByText('Failed')).toBeInTheDocument();
+    expect(within(screen.getByText('Notes').closest('tr')).getByText('—')).toBeInTheDocument();
+  });
+
+  it('shows search snippets with the matched words highlighted', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/documents': () => json([invoice]),
+      'GET /api/documents?q=betrag': () =>
+        json([{ ...invoice, textStatus: 'COMPLETED', snippet: 'Rechnung 4711 Gesamtbetrag 120 EUR' }]),
+    });
+    render(<App />);
+    await screen.findByText('March invoice');
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search documents' }), 'betrag');
+
+    const mark = await screen.findByText('betrag', { selector: 'mark' });
+    expect(mark.closest('p')).toHaveTextContent('Rechnung 4711 Gesamtbetrag 120 EUR');
+  });
+
+  it('shows the extracted text on demand', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/documents': () => json([{ ...invoice, textStatus: 'COMPLETED' }]),
+      [`GET /api/documents/${invoice.id}/text`]: () => Promise.resolve(new Response('Rechnung Nr. 4711')),
+    });
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: 'View text of March invoice' }));
+
+    expect(await screen.findByLabelText('Extracted text of March invoice')).toHaveTextContent('Rechnung Nr. 4711');
+    await user.click(screen.getByRole('button', { name: 'Hide text of March invoice' }));
+    expect(screen.queryByLabelText('Extracted text of March invoice')).not.toBeInTheDocument();
+  });
+
+  it('refreshes the list until text extraction finishes', async () => {
+    let status = 'PENDING';
+    mockApi({
+      'GET /api/documents': () => {
+        const response = json([{ ...invoice, textStatus: status }]);
+        status = 'COMPLETED';
+        return response;
+      },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText('Extracting…')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'View text of March invoice' }, { timeout: 4000 })).toBeInTheDocument();
+  });
+
   it('reports when the backend is unreachable', async () => {
     mockApi({ 'GET /api/documents': () => Promise.resolve(new Response('Bad gateway', { status: 502 })) });
 

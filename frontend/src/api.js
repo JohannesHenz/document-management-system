@@ -45,6 +45,14 @@ export function deleteDocument(id) {
   return request(`${BASE}/${id}`, { method: 'DELETE' });
 }
 
+export async function fetchText(id) {
+  const response = await fetch(`${BASE}/${id}/text`);
+  if (!response.ok) {
+    throw new Error(await errorMessage(response));
+  }
+  return response.text();
+}
+
 export function contentUrl(id) {
   return `${BASE}/${id}/content`;
 }
