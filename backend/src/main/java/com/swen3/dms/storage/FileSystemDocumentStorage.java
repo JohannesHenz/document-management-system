@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
  * so a key can never point outside the storage directory.
  */
 @Component
+@ConditionalOnProperty(name = "dms.storage.type", havingValue = "filesystem", matchIfMissing = true)
 public class FileSystemDocumentStorage implements DocumentStorage {
 
     private static final Pattern KEY_PATTERN =
